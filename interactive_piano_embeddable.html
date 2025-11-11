@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MusicXML → Interactive Piano (German note names)</title>
+  <style>
+    :root{
+      --white-key-w: 28;
+      --white-key-h: 180;
+      --black-key-w: 18;
+      --black-key-h: 110;
+    }
+    body{font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; margin:16px;}
+    header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+    .btn{padding:8px 12px;border:1px solid #ccc;border-radius:8px;background:#f7f7f7;cursor:pointer}
+    .btn:hover{background:#eee}
+    #status{font-size:0.9rem;color:#555}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    label{font-size:0.9rem;color:#444}
+    input[type="text"]{width:420px;max-width:90vw;padding:6px 8px;border-radius:8px;border:1px solid #ccc}
+    .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; background:#f3f3f3;border-radius:6px;padding:2px 6px;border:1px solid #ddd}
+    .legend{font-size:0.85rem;color:#666;margin:6px 0 12px}
+    svg{max-width:100%;height:auto;display:block}
+    .key.white{fill:#fff;stroke:#333;stroke-width:1}
+    .key.black{fill:#111;stroke:#000;stroke-width:1}
+    .key:hover{filter:brightness(1.1)}
+    .mark{fill:#e22;stroke:#b00;stroke-width:1}
+    .mark-label{font: 700 10px system-ui, Arial, sans-serif; fill:#fff; dominant-baseline:middle; text-anchor:middle}
+    details{margin-top:14px}
+    summary{cursor:pointer}
+    .small{font-size:0.85rem;color:#666}
+  </style>
+</head>
+<body>
+  <header>
+    <strong>MusicXML → Interactive Piano</strong>
+    <span id="status" aria-live="polite"></span>
+  </header>
+
+  <div class="row">
+    <label for="xmlUrl">Load via URL:</label>
+    <input id="xmlUrl" type="text" placeholder="https://example.com/yourfile.musicxml" />
+    <button class="btn" id="loadBtn">Load</button>
+    <label for="fileInp">or choose a file:</label>
+    <input id="fileInp" type="file" accept=".musicxml,.xml,.mxl" />
+  </div>
+  <p class="legend">Tip: Add a query parameter <span class="kbd">?musicxml=&lt;URL&gt;</span> to auto-load on GitHub Pages. Hover any key to see its German name. Circles show the sequence index of each note occurrence.</p>
+
+  <div id="viz"></div>
+
+  <details>
+    <summary>Embed instructions</summary>
+    <div class="small">
+      Host this file on GitHub Pages and embed it like:<br>
+      <code>&lt;iframe src="https://&lt;your-user&gt;.github.io/&lt;repo&gt;/piano.html?musicxml=&lt;encoded-URL-to-musicxml&gt;" width="100%" height="320" style="border:0;" loading="lazy"&gt;&lt;/iframe&gt;</code>
+    </div>
+  </details>
+
+<script>
+// ===== Utility: German note names =====
+// For naturals use: C D E F G A H
+// For flats: Ces Des Es Fes Ges As B
+// For sharps: Cis Dis Eis Fis Gis Ais His
+function germanName(step, alter){
+  const naturals = {C:'C', D:'D', E:'E', F:'F', G:'G', A:'A', B:'H'};
+  const flats    = {C:'Ces', D:'Des', E:'Es', F:'Fes', G:'Ges', A:'As', B:'B'};
+  const sharps   = {C:'Cis', D:'Dis', E:'Eis', F:'Fis', G:'Gis', A:'Ais', B:'His'};
+  if(alter === -1) return flats[step] || step;
+  if(alter ===  1) return sharps[step] || step;
+  return naturals[step] || step;
+}
+
+function stepToSemitone(step){
+  return {C:0, D:2, E:4, F:5, G:7, A:9, B:11}[step];
+}
+
+function musicXMLPitchToMidi(step, alter, octave){
+  // MIDI: C4 (middle C) = 60.
+  const pc = stepToSemitone(step) + (alter||0);
+  return (octave + 1) * 12 + pc;
+}
+
+function midiToStepAlterOct(midi){
+  const sem = midi % 12;
+  const octave = Math.floor(midi/12) - 1;
+  // Prefer naturals; map accidentals to sharps by default
+  const table = {
+    0:['C',0], 1:['C',1], 2:['D',0], 3:['D',1], 4:['E',0], 5:['F',0],
+    6:['F',1], 7:['G',0], 8:['G',1], 9:['A',0], 10:['A',1], 11:['B',0]
+  };
+  const [step, alter] = table[(sem+12)%12];
+  return {step, alter, octave};
+}
+
+// ===== Parse MusicXML (very lightweight) =====
+async function parseMusicXML(text){
+  const xml = new DOMParser().parseFromString(text, 'application/xml');
+  const notes = Array.from(xml.getElementsByTagName('note'));
+  const sequence = [];
+  for(const n of notes){
+    if(n.getElementsByTagName('rest').length) continue;
+    const pitch = n.getElementsByTagName('pitch')[0];
+    if(!pitch) continue;
+    const step = pitch.getElementsByTagName('step')[0]?.textContent?.trim();
+    const octave = parseInt(pitch.getElementsByTagName('octave')[0]?.textContent?.trim()||'0',10);
+    const alter = parseInt(pitch.getElementsByTagName('alter')[0]?.textContent?.trim()||'0',10);
+    if(!step && step!=="") continue;
+    const midi = musicXMLPitchToMidi(step, alter, octave);
+    sequence.push({step, alter, octave, midi});
+  }
+  return sequence;
+}
+
+// ===== Keyboard layout helpers =====
+function isBlack(midi){
+  const pc = ((midi % 12) + 12) % 12;
+  return [1,3,6,8,10].includes(pc);
+}
+
+function whiteKeyIndexForRange(midiStart, midi){
+  // count whites from start to this midi (inclusive of previous notes), used for x position
+  let count = 0;
+  for(let m = midiStart; m < midi; m++){
+    if(!isBlack(m)) count++;
+  }
+  return count;
+}
+
+function cBound(midi){ // nearest C <= midi
+  return Math.floor(midi/12)*12;
+}
+function bBound(midi){ // nearest B >= midi
+  return Math.ceil((midi+1)/12)*12 - 1;
+}
+
+// ===== Render SVG keyboard and marks =====
+function renderKeyboard(container, seq){
+  if(!seq.length){ container.innerHTML = '<p>No pitched notes found.</p>'; return; }
+  const minMidi = Math.min(...seq.map(n=>n.midi));
+  const maxMidi = Math.max(...seq.map(n=>n.midi));
+  const startMidi = cBound(minMidi);
+  const endMidi = bBound(maxMidi);
+
+  // dimensions
+  const Ww = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-w'));
+  const Wh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-h'));
+  const Bw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--black-key-w'));
+  const Bh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--black-key-h'));
+
+  // count white keys
+  let whiteCount = 0;
+  for(let m=startMidi; m<=endMidi; m++){ if(!isBlack(m)) whiteCount++; }
+  const width = whiteCount*Ww;
+  const height = Wh + 40; // extra space for stacked markers
+
+  // Prepare SVG
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS,'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('role','img');
+  svg.setAttribute('aria-label','Interactive piano keyboard');
+
+  // groups
+  const gWhite = document.createElementNS(svgNS,'g');
+  const gBlack = document.createElementNS(svgNS,'g');
+  const gMarks = document.createElementNS(svgNS,'g');
+
+  // Map midi → key center x for placing marks
+  const keyCenterX = new Map();
+
+  // Draw white keys first
+  let wIndex = 0;
+  for(let m=startMidi; m<=endMidi; m++){
+    if(isBlack(m)) continue;
+    const x = wIndex*Ww;
+    const key = document.createElementNS(svgNS,'rect');
+    key.setAttribute('x', x);
+    key.setAttribute('y', 0);
+    key.setAttribute('width', Ww);
+    key.setAttribute('height', Wh);
+    key.setAttribute('class','key white');
+    const {step, alter, octave} = midiToStepAlterOct(m);
+    const label = `${germanName(step, alter)}${octave}`;
+    key.dataset.midi = m;
+    key.dataset.label = label;
+    const title = document.createElementNS(svgNS,'title');
+    title.textContent = label;
+    key.appendChild(title);
+    gWhite.appendChild(key);
+    keyCenterX.set(m, x + Ww/2);
+    wIndex++;
+  }
+
+  // Draw black keys
+  wIndex = 0; // recount to place black keys between whites
+  for(let m=startMidi; m<=endMidi; m++){
+    if(!isBlack(m)){
+      wIndex++;
+      continue;
+    }
+    // Black key sits between surrounding whites. Compute x from preceding whites
+    const whitesToLeft = whiteKeyIndexForRange(startMidi, m);
+    const x = whitesToLeft*Ww - Bw/2;
+    const key = document.createElementNS(svgNS,'rect');
+    key.setAttribute('x', x);
+    key.setAttribute('y', 0);
+    key.setAttribute('width', Bw);
+    key.setAttribute('height', Bh);
+    key.setAttribute('rx', 2);
+    key.setAttribute('class','key black');
+    const {step, alter, octave} = midiToStepAlterOct(m);
+    const label = `${germanName(step, alter)}${octave}`;
+    key.dataset.midi = m;
+    key.dataset.label = label;
+    const title = document.createElementNS(svgNS,'title');
+    title.textContent = label;
+    key.appendChild(title);
+    gBlack.appendChild(key);
+    keyCenterX.set(m, whitesToLeft*Ww);
+  }
+
+  // Place red circles with indices for each occurrence (stack if same key used multiple times)
+  const stackHeights = new Map(); // midi → count
+  const radius = 10;
+  const baselineY = Wh + 15; // start placing from bottom area
+
+  seq.forEach((n, idx) => {
+    const m = n.midi;
+    // Skip notes outside keyboard just in case
+    if(m < startMidi || m > endMidi) return;
+    const cx = keyCenterX.get(m);
+    const count = (stackHeights.get(m)||0);
+    const cy = baselineY - count * (radius*2 + 4);
+    stackHeights.set(m, count+1);
+
+    const circle = document.createElementNS(svgNS,'circle');
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', radius);
+    circle.setAttribute('class','mark');
+
+    const text = document.createElementNS(svgNS,'text');
+    text.setAttribute('x', cx);
+    text.setAttribute('y', cy + 0.5); // slight optical centering
+    text.setAttribute('class','mark-label');
+    text.textContent = (idx+1).toString();
+
+    const title = document.createElementNS(svgNS,'title');
+    title.textContent = `${idx+1}: ${germanName(n.step, n.alter)}${n.octave}`;
+    circle.appendChild(title);
+
+    gMarks.appendChild(circle);
+    gMarks.appendChild(text);
+  });
+
+  svg.appendChild(gWhite);
+  svg.appendChild(gBlack);
+  svg.appendChild(gMarks);
+
+  container.innerHTML = '';
+  container.appendChild(svg);
+}
+
+// ===== Loaders =====
+async function loadFromUrl(url){
+  setStatus('Loading MusicXML…');
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  const seq = await parseMusicXML(text);
+  renderKeyboard(document.getElementById('viz'), seq);
+  setStatus(`Loaded ${seq.length} notes from URL.`);
+}
+
+async function loadFromFile(file){
+  setStatus('Reading MusicXML…');
+  const text = await file.text();
+  const seq = await parseMusicXML(text);
+  renderKeyboard(document.getElementById('viz'), seq);
+  setStatus(`Loaded ${seq.length} notes from file: ${file.name}`);
+}
+
+function setStatus(msg){
+  document.getElementById('status').textContent = msg || '';
+}
+
+// ===== Wire up UI =====
+const fileInp = document.getElementById('fileInp');
+const urlInp = document.getElementById('xmlUrl');
+const loadBtn = document.getElementById('loadBtn');
+fileInp.addEventListener('change', (e)=>{
+  const f = e.target.files?.[0];
+  if(f) loadFromFile(f).catch(err=>setStatus('Error: '+err.message));
+});
+loadBtn.addEventListener('click', ()=>{
+  const url = urlInp.value.trim();
+  if(url) loadFromUrl(url).catch(err=>setStatus('Error: '+err.message));
+});
+
+// Drag & drop support
+window.addEventListener('dragover', e=>{ e.preventDefault(); });
+window.addEventListener('drop', e=>{ e.preventDefault(); const f = e.dataTransfer?.files?.[0]; if(f) loadFromFile(f).catch(err=>setStatus('Error: '+err.message)); });
+
+// Auto-load via ?musicxml=
+(function(){
+  const params = new URLSearchParams(location.search);
+  const url = params.get('musicxml');
+  if(url){
+    urlInp.value = url;
+    loadFromUrl(url).catch(err=>setStatus('Error: '+err.message));
+  }
+})();
+</script>
+</body>
+</html>
