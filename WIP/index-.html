@@ -59,12 +59,16 @@
 
     a{color:#8ef}
     .tiny{font-size:11px; color:#aaa}
+
+    /* Minimal error badge */
+    .overlay-error{position:absolute; inset:auto 12px 12px auto; background:#c62828; color:#fff; padding:6px 10px; border-radius:8px; font-size:12px; box-shadow:0 4px 14px rgba(0,0,0,.3); z-index:5; display:none}
+    body.minimal .overlay-error{display:block}
   </style>
 </head>
 <body>
   <header class="non-keyboard">
     <h1>Piano Keyboard · MusicXML Annotator</h1>
-    <div class="meta">Hover keys for German names · Circles show first-appearance index</div>
+    <div class="meta">Hover keys for German names · Circles show <em>all</em> sequence indices (use <code>&simplified=true</code> to collapse consecutive duplicates)</div>
   </header>
 
   <section class="panel non-keyboard">
@@ -74,10 +78,11 @@
       <button id="demo" class="secondary">Load Demo (C Major scale)</button>
     </div>
     <div id="dropzone" class="non-keyboard" style="margin-top:10px">Drop a .musicxml / .xml file here, or use the URL box above.</div>
-    <div class="tiny" style="margin-top:8px">Tip: you can also add <code>?musicxml=…&color=red&minimal=true</code> to the page URL (for embedding).</div>
+    <div class="tiny" style="margin-top:8px">Tip: you can also add <code>?musicxml=…&color=red&minimal=true&simplified=true</code> to the page URL (for embedding).</div>
   </section>
 
   <div id="keyboard-wrap">
+    <div id="errorBadge" class="overlay-error non-keyboard"></div>
     <svg id="keyboard" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piano keyboard"></svg>
   </div>
 
@@ -86,7 +91,7 @@
       <summary><strong>Embed instructions</strong></summary>
       <p>Place this in your page:</p>
 <pre><code>&lt;iframe
-  src="https://adrianartacho.github.io/teach_numeric/?musicxml=scores/mission-a-C.musicxml&amp;color=red&amp;minimal=true"
+  src="https://adrianartacho.github.io/teach_numeric/?musicxml=scores/mission-a-C.musicxml&amp;color=red&amp;minimal=true&amp;simplified=true"
   width="100%" height="320" style="border:0" loading="lazy"&gt;&lt;/iframe&gt;</code></pre>
     </details>
     <div id="log" class="non-keyboard"></div>
@@ -98,7 +103,10 @@
   const $ = sel => document.querySelector(sel);
   const log = (msg) => {
     const el = document.getElementById('log');
-    if (el) el.textContent = msg + (el.textContent ? ('\n' + el.textContent) : '');
+    if (el) el.textContent = msg + (el.textContent ? ('
+' + el.textContent) : '');
+    const badge = document.getElementById('errorBadge');
+    if (badge){ badge.textContent = msg; badge.style.display = 'block'; }
   };
 
   // --- URL params ---
@@ -107,14 +115,13 @@
   if (colorParam) document.documentElement.style.setProperty('--mark-color', colorParam);
   const minimal = (params.get('minimal') === 'true' || params.get('minimal') === '1');
   if (minimal) document.body.classList.add('minimal');
+  const simplified = (params.get('simplified') === 'true' || params.get('simplified') === '1');
 
   // --- German pitch names ---
-  // Returns an object with possible names; we pick according to accidental if available
   function germanNames(pc){
-    // pc: 0..11 for C..B (where B=11 in international; German H=11, B-flat=10)
     switch(pc){
       case 0:  return {natural:'C', sharp:'Cis', flat:'Ces'};
-      case 1:  return {natural:'C♯', sharp:'Cis', flat:'Des'}; // enharmonic
+      case 1:  return {natural:'C♯', sharp:'Cis', flat:'Des'};
       case 2:  return {natural:'D', sharp:'Dis', flat:'Des'};
       case 3:  return {natural:'D♯', sharp:'Dis', flat:'Es'};
       case 4:  return {natural:'E', sharp:'Eis', flat:'Es'};
@@ -150,10 +157,8 @@
     const noteNodes = Array.from(doc.getElementsByTagName('note'));
     let seq = []; // {midi, preferSharp}
     for(const n of noteNodes){
-      // skip rests and grace notes
       if (n.getElementsByTagName('rest').length) continue;
       if (n.getElementsByTagName('grace').length) continue;
-      // optional: skip tie "stop" duplicates (simple heuristic)
       const ties = Array.from(n.getElementsByTagName('tie')).map(t=>t.getAttribute('type'));
       if (ties.includes('stop') && !ties.includes('start')) continue;
 
@@ -165,7 +170,6 @@
       const midi = pitchToMidi(step, alter, octave);
 
       seq.push({midi, preferSharp: alter >= 0});
-      // If this note belongs to a chord (<chord/> present), we still count it in sequence order.
     }
     return seq;
   }
@@ -187,35 +191,47 @@
     return (octave + 1) * 12 + pc;
   }
 
+  // --- Sequence simplification (collapse consecutive duplicates) ---
+  function simplifySequence(seq){
+    if (!simplified) return seq;
+    const out = [];
+    let last = null;
+    for (const n of seq){
+      if (last === null || n.midi !== last){
+        out.push(n);
+      }
+      last = n.midi;
+    }
+    return out;
+  }
+
   // --- Keyboard layout ---
   const WHITE_PCS = new Set([0,2,4,5,7,9,11]);
   const BLACK_PCS = new Set([1,3,6,8,10]);
 
   function buildKeyboardRange(minMidi, maxMidi){
-    // Clamp to piano extents A0 (21) .. C8 (108), expand by one white on both sides when possible
     const MIN = 21, MAX = 108;
     let lo = Math.max(MIN, Math.floor(minMidi));
     let hi = Math.min(MAX, Math.ceil(maxMidi));
-    // Pad out so we start on a C if possible for nicer grouping
     while ((lo % 12) !== 0 && lo > MIN) lo--;
     while ((hi % 12) !== 0 && hi < MAX) hi++;
     return {lo, hi};
   }
 
-  function renderKeyboard(svg, usedSet, firstIndexByMidi, preferSharpByMidi){
+  function renderKeyboard(svg, occurrencesByMidi, preferSharpByMidi){
     const W = svg.clientWidth || svg.parentElement.clientWidth;
     const H = svg.clientHeight || parseInt(getComputedStyle(svg).height);
 
-    // Determine range from used keys if any, else full 88
+    // Determine range from used keys if any
     let lo = 21, hi = 108;
-    if (usedSet.size){
-      const arr = Array.from(usedSet.values());
-      const mMin = Math.min(...arr), mMax = Math.max(...arr);
+    const used = Array.from(occurrencesByMidi.keys());
+    if (used.length){
+      const mMin = Math.min(...used), mMax = Math.max(...used);
       const r = buildKeyboardRange(mMin, mMax);
       lo = r.lo; hi = r.hi;
     }
 
-    // Count white keys in range
+    // Collect white keys and spacing
     let whites = [];
     for (let m = lo; m <= hi; m++){
       const pc = ((m%12)+12)%12;
@@ -226,15 +242,11 @@
     const blackW = whiteW * 0.6;
     const blackH = H * 0.62;
 
-    // Maps to x positions
     const xMap = new Map();
     let x = 0;
-    for (const m of whites){
-      xMap.set(m, x);
-      x += whiteW;
-    }
+    for (const m of whites){ xMap.set(m, x); x += whiteW; }
+
     function whiteAnchorX(m){
-      // find nearest white to the left
       let t = m;
       while (t>=lo){
         const pc = ((t%12)+12)%12;
@@ -247,14 +259,12 @@
     // Clear
     while (svg.firstChild) svg.removeChild(svg.firstChild);
 
-    // Group containers
     const gWhite = document.createElementNS(svgNS, 'g');
     const gBlack = document.createElementNS(svgNS, 'g');
     const gMarks = document.createElementNS(svgNS, 'g');
 
-    // Draw white keys
+    // White keys
     for (const m of whites){
-      const pc = ((m%12)+12)%12;
       const gx = xMap.get(m);
       const rect = document.createElementNS(svgNS, 'rect');
       rect.setAttribute('x', gx);
@@ -268,10 +278,9 @@
       gWhite.appendChild(rect);
     }
 
-    // Draw black keys (iterate through whites and decide if a black follows)
+    // Black keys
     for (const m of whites){
       const pc = ((m%12)+12)%12;
-      // black keys after C, D, F, G, A
       if ([0,2,5,7,9].includes(pc)){
         const bm = m + 1;
         if (bm <= hi){
@@ -291,39 +300,49 @@
       }
     }
 
-    // Draw markers for used keys
+    // Markers – draw ALL occurrences, spread horizontally per key
     const markR = Math.max(10, Math.min(14, whiteW*0.33));
-    for (const m of usedSet){
-      const idx = firstIndexByMidi.get(m);
-      const preferSharp = preferSharpByMidi.get(m);
+
+    for (const [m, indices] of occurrencesByMidi.entries()){
       const pc = ((m%12)+12)%12;
       const isWhite = WHITE_PCS.has(pc);
-      let cx;
+      const preferSharp = preferSharpByMidi.get(m);
+
+      // base center of the key
+      let cxBase;
       if (isWhite){
-        const wx = whiteAnchorX(m);
-        cx = wx + whiteW/2;
+        const wx = whiteAnchorX(m); cxBase = wx + whiteW/2;
       } else {
-        // black: position like we drew it
-        const wx = whiteAnchorX(m);
-        cx = wx + whiteW - (blackW/2);
+        const wx = whiteAnchorX(m); cxBase = wx + whiteW - (blackW/2);
       }
       const cy = isWhite ? (H*0.18) : (blackH*0.55);
 
-      const circle = document.createElementNS(svgNS, 'circle');
-      circle.setAttribute('cx', cx);
-      circle.setAttribute('cy', cy);
-      circle.setAttribute('r', markR);
-      circle.setAttribute('class', 'mark');
-      circle.appendChild(titleNode(m, preferSharp));
+      // horizontal fan so circles don't overlap
+      const count = indices.length;
+      const maxSpan = isWhite ? whiteW*0.85 : blackW*0.8;
+      const idealDx = markR*1.35;
+      const neededSpan = Math.max(idealDx*(count-1), 0);
+      const dx = count>1 ? Math.min(idealDx, (maxSpan)/(Math.max(1,count-1))) : 0;
+      const startX = cxBase - dx*(count-1)/2;
 
-      const label = document.createElementNS(svgNS, 'text');
-      label.setAttribute('x', cx);
-      label.setAttribute('y', cy + 0.5);
-      label.setAttribute('class', 'mark-label');
-      label.textContent = String(idx);
+      indices.forEach((idx, i)=>{
+        const cx = startX + i*dx;
+        const circle = document.createElementNS(svgNS, 'circle');
+        circle.setAttribute('cx', cx);
+        circle.setAttribute('cy', cy);
+        circle.setAttribute('r', markR);
+        circle.setAttribute('class', 'mark');
+        circle.appendChild(titleNode(m, preferSharp));
 
-      gMarks.appendChild(circle);
-      gMarks.appendChild(label);
+        const label = document.createElementNS(svgNS, 'text');
+        label.setAttribute('x', cx);
+        label.setAttribute('y', cy + 0.5);
+        label.setAttribute('class', 'mark-label');
+        label.textContent = String(idx);
+
+        gMarks.appendChild(circle);
+        gMarks.appendChild(label);
+      });
     }
 
     svg.appendChild(gWhite);
@@ -338,30 +357,27 @@
   }
 
   function annotateSequence(seq){
-    // seq: [{midi, preferSharp}]
-    const usedSet = new Set();
-    const firstIndexByMidi = new Map();
+    // Build occurrences list for each midi, keeping order indices (1-based)
+    const occurrencesByMidi = new Map();
     const preferSharpByMidi = new Map();
     let i = 1;
     for (const item of seq){
       const m = item.midi;
-      if (!firstIndexByMidi.has(m)){
-        firstIndexByMidi.set(m, i);
-        preferSharpByMidi.set(m, !!item.preferSharp);
-        usedSet.add(m);
-      }
+      if (!occurrencesByMidi.has(m)) occurrencesByMidi.set(m, []);
+      occurrencesByMidi.get(m).push(i);
+      if (!preferSharpByMidi.has(m)) preferSharpByMidi.set(m, !!item.preferSharp);
       i++;
     }
-    return {usedSet, firstIndexByMidi, preferSharpByMidi};
+    return {occurrencesByMidi, preferSharpByMidi};
   }
 
   async function loadFromUrl(url){
     try{
-      log(`Loading: ${url}`);
       const txt = await fetchText(url);
-      const seq = parseMusicXML(txt);
-      const {usedSet, firstIndexByMidi, preferSharpByMidi} = annotateSequence(seq);
-      renderKeyboard($('#keyboard'), usedSet, firstIndexByMidi, preferSharpByMidi);
+      let seq = parseMusicXML(txt);
+      seq = simplifySequence(seq);
+      const {occurrencesByMidi, preferSharpByMidi} = annotateSequence(seq);
+      renderKeyboard($('#keyboard'), occurrencesByMidi, preferSharpByMidi);
     }catch(err){
       log('Error: ' + err.message);
       console.error(err);
@@ -372,22 +388,23 @@
     const reader = new FileReader();
     reader.onload = () => {
       try{
-        const seq = parseMusicXML(String(reader.result));
-        const {usedSet, firstIndexByMidi, preferSharpByMidi} = annotateSequence(seq);
-        renderKeyboard($('#keyboard'), usedSet, firstIndexByMidi, preferSharpByMidi);
+        let seq = parseMusicXML(String(reader.result));
+        seq = simplifySequence(seq);
+        const {occurrencesByMidi, preferSharpByMidi} = annotateSequence(seq);
+        renderKeyboard($('#keyboard'), occurrencesByMidi, preferSharpByMidi);
       }catch(err){ log('Error parsing file: '+err.message); }
     };
     reader.readAsText(file);
   }
 
-  // --- Demo (C major scale ascending) ---
+  // --- Demo (with a few repeats) ---
   function demoXML(){
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
 <score-partwise version="3.1">
   <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
   <part id="P1"><measure number="1">
-    ${['C4','D4','E4','F4','G4','A4','B4','C5'].map(p=>{
+    ${['C4','D4','E4','F4','G4','A4','G4','C5','C5','B4','A4','G4'].map(p=>{
       const step=p[0]; const octave=p.slice(-1); const alters={'C':0,'D':0,'E':0,'F':0,'G':0,'A':0,'B':0}[step];
       return `<note><pitch><step>${step}</step><alter>${alters}</alter><octave>${octave}</octave></pitch><duration>1</duration><type>quarter</type></note>`
     }).join('')}
@@ -395,9 +412,10 @@
   }
 
   function loadDemo(){
-    const seq = parseMusicXML(demoXML());
-    const {usedSet, firstIndexByMidi, preferSharpByMidi} = annotateSequence(seq);
-    renderKeyboard($('#keyboard'), usedSet, firstIndexByMidi, preferSharpByMidi);
+    let seq = parseMusicXML(demoXML());
+    seq = simplifySequence(seq);
+    const {occurrencesByMidi, preferSharpByMidi} = annotateSequence(seq);
+    renderKeyboard($('#keyboard'), occurrencesByMidi, preferSharpByMidi);
   }
 
   // --- Wire up UI ---
@@ -421,26 +439,19 @@
   // --- Initial load from ?musicxml= ---
   const musicParam = params.get('musicxml');
   if (musicParam){
-    // If relative, keep as-is, else absolute URL
     loadFromUrl(musicParam);
   } else if (minimal){
-    // In minimal mode with no score, render empty keyboard (full range) so iframe has size
-    const dummySeq = [];
-    const usedSet = new Set();
-    const m = new Map();
-    renderKeyboard($('#keyboard'), usedSet, m, m);
+    const empty = new Map();
+    renderKeyboard($('#keyboard'), empty, empty);
   } else {
-    // Load demo by default for interactive page
     loadDemo();
   }
 
-  // Re-render on resize for crisp layout
+  // Re-render on resize
   let rAF = null;
   window.addEventListener('resize', ()=>{
     if (rAF) cancelAnimationFrame(rAF);
     rAF = requestAnimationFrame(()=>{
-      // Re-render with last known sets by reading markers back (fallback: demo)
-      // For simplicity, just trigger a reload if URL param exists
       if (musicParam) loadFromUrl(musicParam); else loadDemo();
     });
   });
