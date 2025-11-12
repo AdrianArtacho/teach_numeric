@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Piano Keyboard – MusicXML Annotator</title>
+  <style>
+    :root{
+      --bg: #111;
+      --fg: #eaeaea;
+      --muted: #888;
+      --brand: #0aa;
+      --mark-color: #e22; /* can be overridden by ?color= */
+      --kbd-height: 260px; /* overall keyboard height */
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      line-height:1.4;
+      display:flex; flex-direction:column; gap:12px;
+      padding:16px;
+    }
+    header.non-keyboard h1{font-size:18px; margin:0}
+    header.non-keyboard .meta{color:var(--muted); font-size:12px}
+
+    .panel.non-keyboard{background:#181818; border:1px solid #222; border-radius:12px; padding:12px}
+    .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+    input[type="text"], input[type="url"]{
+      background:#101010; color:var(--fg); border:1px solid #2a2a2a; border-radius:8px; padding:8px 10px; min-width:320px;
+    }
+    button{background:var(--brand); color:#001516; border:0; border-radius:8px; padding:8px 12px; font-weight:600; cursor:pointer}
+    button.secondary{background:#2a2a2a; color:#ddd}
+
+    #dropzone.non-keyboard{
+      border:1px dashed #2a2a2a; border-radius:12px; padding:10px; text-align:center; color:#bbb;
+    }
+    #log.non-keyboard{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap}
+
+    /* Keyboard container */
+    #keyboard-wrap{position:relative; width:100%;}
+    #keyboard{display:block; width:100%; height:var(--kbd-height); background:#0000}
+
+    /* SVG Key styles */
+    .white-key{fill:#f7f7f7; stroke:#ccc;}
+    .black-key{fill:#111; stroke:#000}
+    .key:hover{outline: none}
+    .key.focus{filter: drop-shadow(0 0 4px rgba(255,255,255,.35));}
+
+    /* Marker circles */
+    .mark{fill:var(--mark-color); stroke:var(--mark-color); stroke-width:1}
+    .mark-label{font-size:11px; font-weight:700; fill:#fff; text-anchor:middle; dominant-baseline:middle}
+
+    /* Minimal mode tweaks */
+    body.minimal{background:transparent; padding:0}
+    body.minimal #keyboard-wrap{margin:0}
+    body.minimal .non-keyboard{display:none !important}
+
+    a{color:#8ef}
+    .tiny{font-size:11px; color:#aaa}
+  </style>
+</head>
+<body>
+  <header class="non-keyboard">
+    <h1>Piano Keyboard · MusicXML Annotator</h1>
+    <div class="meta">Hover keys for German names · Circles show <strong>all</strong> sequence positions (stacked)</div>
+  </header>
+
+  <section class="panel non-keyboard">
+    <div class="row">
+      <input id="url" type="url" placeholder="Paste MusicXML URL…" />
+      <button id="loadUrl">Load</button>
+      <button id="demo" class="secondary">Load Demo (C Major scale)</button>
+    </div>
+    <div id="dropzone" class="non-keyboard" style="margin-top:10px">Drop a .musicxml / .xml file here, or use the URL box above.</div>
+    <div class="tiny" style="margin-top:8px">Tip: you can also add <code>?musicxml=…&color=red&minimal=true</code> to the page URL (for embedding). Use <code>&stackgap=</code> to change vertical spacing.</div>
+  </section>
+
+  <div id="keyboard-wrap">
+    <svg id="keyboard" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piano keyboard"></svg>
+  </div>
+
+  <section class="panel non-keyboard">
+    <details>
+      <summary><strong>Embed instructions</strong></summary>
+      <p>Place this in your page:</p>
+<pre><code>&lt;iframe
+  src="https://adrianartacho.github.io/teach_numeric/?musicxml=scores/mission-a-C.musicxml&amp;color=red&amp;minimal=true"
+  width="100%" height="320" style="border:0" loading="lazy"&gt;&lt;/iframe&gt;</code></pre>
+    </details>
+    <div id="log" class="non-keyboard"></div>
+  </section>
+
+<script>
+(function(){
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const $ = sel => document.querySelector(sel);
+  const log = (msg) => {
+    const el = document.getElementById('log');
+    if (el) el.textContent = msg + (el.textContent ? ('\n' + el.textContent) : '');
+  };
+
+  // --- URL params ---
+  const params = new URLSearchParams(location.search);
+  const colorParam = params.get('color');
+  if (colorParam) document.documentElement.style.setProperty('--mark-color', colorParam);
+  const minimal = (params.get('minimal') === 'true' || params.get('minimal') === '1');
+  if (minimal) document.body.classList.add('minimal');
+  const stackGapParam = parseFloat(params.get('stackgap') || '0'); // additional px added to default gap
+
+  // --- German pitch names ---
+  function germanNames(pc){
+    switch(pc){
+      case 0:  return {natural:'C', sharp:'Cis', flat:'Ces'};
+      case 1:  return {natural:'C♯', sharp:'Cis', flat:'Des'};
+      case 2:  return {natural:'D', sharp:'Dis', flat:'Des'};
+      case 3:  return {natural:'D♯', sharp:'Dis', flat:'Es'};
+      case 4:  return {natural:'E', sharp:'Eis', flat:'Es'};
+      case 5:  return {natural:'F', sharp:'Fis', flat:'Fes'};
+      case 6:  return {natural:'F♯', sharp:'Fis', flat:'Ges'};
+      case 7:  return {natural:'G', sharp:'Gis', flat:'Ges'};
+      case 8:  return {natural:'G♯', sharp:'Gis', flat:'As'};
+      case 9:  return {natural:'A', sharp:'Ais', flat:'As'};
+      case 10: return {natural:'B', sharp:'His', flat:'B'};   // German: B = B♭
+      case 11: return {natural:'H', sharp:'His', flat:'Ces'}; // H = B natural
+    }
+  }
+  function midiToGermanName(m, preferSharp){
+    const pc = ((m % 12) + 12) % 12;
+    const o = Math.floor(m/12) - 1; // MIDI octave
+    const names = germanNames(pc);
+    let base;
+    if (pc === 10) base = preferSharp ? names.sharp : names.natural;
+    else if (pc === 11) base = preferSharp ? names.sharp : names.natural;
+    else base = preferSharp ? names.sharp || names.natural : names.natural;
+    return `${base}${o}`;
+  }
+
+  // --- MusicXML parsing ---
+  async function fetchText(url){
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    return await res.text();
+  }
+
+  function parseMusicXML(xmlText){
+    const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    const noteNodes = Array.from(doc.getElementsByTagName('note'));
+    let seq = []; // {midi, preferSharp}
+    for(const n of noteNodes){
+      if (n.getElementsByTagName('rest').length) continue;
+      if (n.getElementsByTagName('grace').length) continue;
+      const ties = Array.from(n.getElementsByTagName('tie')).map(t=>t.getAttribute('type'));
+      if (ties.includes('stop') && !ties.includes('start')) continue;
+
+      const pitch = n.getElementsByTagName('pitch')[0];
+      if (!pitch) continue;
+      const step = pitch.getElementsByTagName('step')[0]?.textContent?.trim();
+      const alter = +(pitch.getElementsByTagName('alter')[0]?.textContent?.trim() || '0');
+      const octave = +(pitch.getElementsByTagName('octave')[0]?.textContent?.trim() || '4');
+      const midi = pitchToMidi(step, alter, octave);
+
+      seq.push({midi, preferSharp: alter >= 0});
+    }
+    return seq;
+  }
+
+  function stepToPc(step){
+    switch(step){
+      case 'C': return 0;
+      case 'D': return 2;
+      case 'E': return 4;
+      case 'F': return 5;
+      case 'G': return 7;
+      case 'A': return 9;
+      case 'B': return 11; // MusicXML B = international B (German H)
+      default: return 0;
+    }
+  }
+  function pitchToMidi(step, alter, octave){
+    const pc = (stepToPc(step) + alter + 12) % 12;
+    return (octave + 1) * 12 + pc;
+  }
+
+  // --- Keyboard layout ---
+  const WHITE_PCS = new Set([0,2,4,5,7,9,11]);
+  const BLACK_PCS = new Set([1,3,6,8,10]);
+
+  function buildKeyboardRange(minMidi, maxMidi){
+    const MIN = 21, MAX = 108;
+    let lo = Math.max(MIN, Math.floor(minMidi));
+    let hi = Math.min(MAX, Math.ceil(maxMidi));
+    while ((lo % 12) !== 0 && lo > MIN) lo--;
+    while ((hi % 12) !== 0 && hi < MAX) hi++;
+    return {lo, hi};
+  }
+
+  function renderKeyboard(svg, indicesByMidi, preferSharpByMidi){
+    const W = svg.clientWidth || svg.parentElement.clientWidth;
+    const H = svg.clientHeight || parseInt(getComputedStyle(svg).height);
+
+    // Determine range from used keys if any
+    let lo = 21, hi = 108;
+    const used = Array.from(indicesByMidi.keys());
+    if (used.length){
+      const mMin = Math.min(...used), mMax = Math.max(...used);
+      const r = buildKeyboardRange(mMin, mMax);
+      lo = r.lo; hi = r.hi;
+    }
+
+    // Count white keys in range
+    let whites = [];
+    for (let m = lo; m <= hi; m++){
+      const pc = ((m%12)+12)%12;
+      if (WHITE_PCS.has(pc)) whites.push(m);
+    }
+    const whiteCount = whites.length;
+    const whiteW = W / whiteCount;
+    const blackW = whiteW * 0.6;
+    const blackH = H * 0.62;
+
+    // Maps to x positions
+    const xMap = new Map();
+    let x = 0;
+    for (const m of whites){
+      xMap.set(m, x);
+      x += whiteW;
+    }
+    function whiteAnchorX(m){
+      let t = m;
+      while (t>=lo){
+        const pc = ((t%12)+12)%12;
+        if (WHITE_PCS.has(pc)) return xMap.get(t);
+        t--;
+      }
+      return 0;
+    }
+
+    // Clear
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    // Group containers
+    const gWhite = document.createElementNS(svgNS, 'g');
+    const gBlack = document.createElementNS(svgNS, 'g');
+    const gMarks = document.createElementNS(svgNS, 'g');
+
+    // Draw white keys
+    for (const m of whites){
+      const gx = xMap.get(m);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', gx);
+      rect.setAttribute('y', 0);
+      rect.setAttribute('width', whiteW);
+      rect.setAttribute('height', H);
+      rect.setAttribute('class', 'key white-key');
+      rect.setAttribute('data-midi', m);
+      rect.setAttribute('tabindex', 0);
+      rect.appendChild(titleNode(m, preferSharpByMidi.get(m)));
+      gWhite.appendChild(rect);
+    }
+
+    // Draw black keys
+    for (const m of whites){
+      const pc = ((m%12)+12)%12;
+      if ([0,2,5,7,9].includes(pc)){
+        const bm = m + 1;
+        if (bm <= hi){
+          const bx = whiteAnchorX(bm) + whiteW - (blackW/2);
+          const rect = document.createElementNS(svgNS, 'rect');
+          rect.setAttribute('x', bx);
+          rect.setAttribute('y', 0);
+          rect.setAttribute('width', blackW);
+          rect.setAttribute('height', blackH);
+          rect.setAttribute('rx', 2);
+          rect.setAttribute('class', 'key black-key');
+          rect.setAttribute('data-midi', bm);
+          rect.setAttribute('tabindex', 0);
+          rect.appendChild(titleNode(bm, true));
+          gBlack.appendChild(rect);
+        }
+      }
+    }
+
+    // Draw markers for used keys (stacked for multiple occurrences)
+    const markR = Math.max(10, Math.min(14, whiteW*0.33));
+    const baseGap = markR * 1.9 + stackGapParam; // vertical gap between stacked bubbles
+
+    for (const m of used){
+      const indices = indicesByMidi.get(m) || [];
+      if (!indices.length) continue;
+
+      const pc = ((m%12)+12)%12;
+      const isWhite = WHITE_PCS.has(pc);
+
+      let cx;
+      if (isWhite){
+        const wx = whiteAnchorX(m);
+        cx = wx + whiteW/2;
+      } else {
+        const wx = whiteAnchorX(m);
+        cx = wx + whiteW - (blackW/2);
+      }
+
+      // starting y position
+      const startY = isWhite ? (H*0.18) : (blackH*0.55);
+
+      // stack direction: down for whites, up for blacks if there's not enough space
+      const stackUp = !isWhite && (startY + baseGap * (indices.length-1) > blackH - markR);
+
+      indices.forEach((seqNo, k) => {
+        const offset = k * baseGap;
+        const cy = stackUp ? (startY - offset) : (startY + offset);
+
+        const circle = document.createElementNS(svgNS, 'circle');
+        circle.setAttribute('cx', cx);
+        circle.setAttribute('cy', cy);
+        circle.setAttribute('r', markR);
+        circle.setAttribute('class', 'mark');
+        circle.appendChild(titleNode(m, !!preferSharpByMidi.get(m)));
+
+        const label = document.createElementNS(svgNS, 'text');
+        label.setAttribute('x', cx);
+        label.setAttribute('y', cy + 0.5);
+        label.setAttribute('class', 'mark-label');
+        label.textContent = String(seqNo);
+
+        gMarks.appendChild(circle);
+        gMarks.appendChild(label);
+      });
+    }
+
+    svg.appendChild(gWhite);
+    svg.appendChild(gBlack);
+    svg.appendChild(gMarks);
+  }
+
+  function titleNode(midi, preferSharp){
+    const t = document.createElementNS(svgNS, 'title');
+    t.textContent = midiToGermanName(midi, !!preferSharp);
+    return t;
+  }
+
+  function groupSequence(seq){
+    // Build midi -> [indices...] map (1-based)
+    const indicesByMidi = new Map();
+    const preferSharpByMidi = new Map();
+    let i = 1;
+    for (const item of seq){
+      const arr = indicesByMidi.get(item.midi) || [];
+      arr.push(i);
+      indicesByMidi.set(item.midi, arr);
+      if (!preferSharpByMidi.has(item.midi)){
+        preferSharpByMidi.set(item.midi, !!item.preferSharp);
+      }
+      i++;
+    }
+    return {indicesByMidi, preferSharpByMidi};
+  }
+
+  async function loadFromUrl(url){
+    try{
+      log(`Loading: ${url}`);
+      const txt = await fetchText(url);
+      const seq = parseMusicXML(txt);
+      const {indicesByMidi, preferSharpByMidi} = groupSequence(seq);
+      renderKeyboard($('#keyboard'), indicesByMidi, preferSharpByMidi);
+    }catch(err){
+      log('Error: ' + err.message);
+      console.error(err);
+    }
+  }
+
+  function loadFromFile(file){
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const seq = parseMusicXML(String(reader.result));
+        const {indicesByMidi, preferSharpByMidi} = groupSequence(seq);
+        renderKeyboard($('#keyboard'), indicesByMidi, preferSharpByMidi);
+      }catch(err){ log('Error parsing file: '+err.message); }
+    };
+    reader.readAsText(file);
+  }
+
+  // --- Demo (C major scale ascending with repeats) ---
+  function demoXML(){
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    ${['C4','D4','E4','F4','G4','A4','B4','C5','F4','F4','G4','E4'].map(p=>{
+      const step=p[0]; const octave=p.slice(-1); const alters={'C':0,'D':0,'E':0,'F':0,'G':0,'A':0,'B':0}[step];
+      return `<note><pitch><step>${step}</step><alter>${alters}</alter><octave>${octave}</octave></pitch><duration>1</duration><type>quarter</type></note>`
+    }).join('')}
+  </measure></part></score-partwise>`;
+  }
+
+  function loadDemo(){
+    const seq = parseMusicXML(demoXML());
+    const {indicesByMidi, preferSharpByMidi} = groupSequence(seq);
+    renderKeyboard($('#keyboard'), indicesByMidi, preferSharpByMidi);
+  }
+
+  // --- UI wiring ---
+  $('#loadUrl')?.addEventListener('click', ()=>{
+    const url = $('#url').value.trim();
+    if (url) loadFromUrl(url);
+  });
+  $('#demo')?.addEventListener('click', loadDemo);
+
+  const dz = document.getElementById('dropzone');
+  if (dz){
+    dz.addEventListener('dragover', e=>{e.preventDefault(); dz.style.background='#131313'});
+    dz.addEventListener('dragleave', e=>{dz.style.background=''});
+    dz.addEventListener('drop', e=>{
+      e.preventDefault(); dz.style.background='';
+      const f = e.dataTransfer.files?.[0];
+      if (f) loadFromFile(f);
+    });
+  }
+
+  // --- Initial load from ?musicxml= ---
+  const musicParam = params.get('musicxml');
+  if (musicParam){
+    loadFromUrl(musicParam);
+  } else if (minimal){
+    // Render empty (just keys) so iframe has size
+    const indicesByMidi = new Map();
+    const preferSharpByMidi = new Map();
+    renderKeyboard($('#keyboard'), indicesByMidi, preferSharpByMidi);
+  } else {
+    loadDemo();
+  }
+
+  // Re-render on resize
+  let rAF = null;
+  window.addEventListener('resize', ()=>{
+    if (rAF) cancelAnimationFrame(rAF);
+    rAF = requestAnimationFrame(()=>{
+      if (musicParam) loadFromUrl(musicParam); else loadDemo();
+    });
+  });
+})();
+</script>
+</body>
+</html>
