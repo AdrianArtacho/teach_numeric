@@ -3,318 +3,447 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MusicXML → Interactive Piano (German note names)</title>
+  <title>Piano Keyboard – MusicXML Annotator</title>
   <style>
     :root{
-      --white-key-w: 28;
-      --white-key-h: 180;
-      --black-key-w: 18;
-      --black-key-h: 110;
-      --mark-color: #e22; /* default circle color; can be overridden via ?color= */
+      --bg: #111;
+      --fg: #eaeaea;
+      --muted: #888;
+      --brand: #0aa;
+      --mark-color: #e22; /* can be overridden by ?color= */
+      --kbd-height: 260px; /* overall keyboard height */
     }
-    body{font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; margin:16px;}
-    header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-    .btn{padding:8px 12px;border:1px solid #ccc;border-radius:8px;background:#f7f7f7;cursor:pointer}
-    .btn:hover{background:#eee}
-    #status{font-size:0.9rem;color:#555}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    label{font-size:0.9rem;color:#444}
-    input[type="text"]{width:420px;max-width:90vw;padding:6px 8px;border-radius:8px;border:1px solid #ccc}
-    .kbd{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; background:#f3f3f3;border-radius:6px;padding:2px 6px;border:1px solid #ddd}
-    .legend{font-size:0.85rem;color:#666;margin:6px 0 12px}
-    svg{max-width:100%;height:auto;display:block}
-    .key.white{fill:#fff;stroke:#333;stroke-width:1}
-    .key.black{fill:#111;stroke:#000;stroke-width:1}
-    .key:hover{filter:brightness(1.1)}
-    .mark{fill:var(--mark-color);stroke:var(--mark-color);stroke-width:1}
-    .mark-label{font: 700 10px system-ui, Arial, sans-serif; fill:#fff; dominant-baseline:middle; text-anchor:middle}
-    details{margin-top:14px}
-    summary{cursor:pointer}
-    .small{font-size:0.85rem;color:#666}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      line-height:1.4;
+      display:flex; flex-direction:column; gap:12px;
+      padding:16px;
+    }
+    header.non-keyboard h1{font-size:18px; margin:0}
+    header.non-keyboard .meta{color:var(--muted); font-size:12px}
+
+    .panel.non-keyboard{background:#181818; border:1px solid #222; border-radius:12px; padding:12px}
+    .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+    input[type="text"], input[type="url"]{
+      background:#101010; color:var(--fg); border:1px solid #2a2a2a; border-radius:8px; padding:8px 10px; min-width:320px;
+    }
+    button{background:var(--brand); color:#001516; border:0; border-radius:8px; padding:8px 12px; font-weight:600; cursor:pointer}
+    button.secondary{background:#2a2a2a; color:#ddd}
+
+    #dropzone.non-keyboard{
+      border:1px dashed #2a2a2a; border-radius:12px; padding:10px; text-align:center; color:#bbb;
+    }
+    #log.non-keyboard{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap}
+
+    /* Keyboard container */
+    #keyboard-wrap{position:relative; width:100%;}
+    #keyboard{display:block; width:100%; height:var(--kbd-height); background:#0000}
+
+    /* SVG Key styles */
+    .white-key{fill:#f7f7f7; stroke:#ccc;}
+    .black-key{fill:#111; stroke:#000}
+    .key:hover{outline: none}
+    .key.focus{filter: drop-shadow(0 0 4px rgba(255,255,255,.35));}
+
+    /* Marker circles */
+    .mark{fill:var(--mark-color); stroke:var(--mark-color); stroke-width:1}
+    .mark-label{font-size:11px; font-weight:700; fill:#fff; text-anchor:middle; dominant-baseline:middle}
+
+    /* Minimal mode tweaks */
+    body.minimal{background:transparent; padding:0}
+    body.minimal #keyboard-wrap{margin:0}
+    body.minimal .non-keyboard{display:none !important}
+
+    a{color:#8ef}
+    .tiny{font-size:11px; color:#aaa}
   </style>
 </head>
 <body>
-  <header>
-    <strong>MusicXML → Interactive Piano</strong>
-    <span id="status" aria-live="polite"></span>
+  <header class="non-keyboard">
+    <h1>Piano Keyboard · MusicXML Annotator</h1>
+    <div class="meta">Hover keys for German names · Circles show first-appearance index</div>
   </header>
 
-  <div class="row">
-    <label for="xmlUrl">Load via URL:</label>
-    <input id="xmlUrl" type="text" placeholder="https://example.com/yourfile.musicxml" />
-    <button class="btn" id="loadBtn">Load</button>
-    <label for="fileInp">or choose a file:</label>
-    <input id="fileInp" type="file" accept=".musicxml,.xml,.mxl" />
-  </div>
-  <p class="legend">Tip: Add a query parameter <span class="kbd">?musicxml=&lt;URL&gt;</span> to auto-load on GitHub Pages. Hover any key to see its German name. Circles show the sequence index of each note occurrence.</p>
-
-  <div id="viz"></div>
-
-  <details>
-    <summary>Embed instructions</summary>
-    <div class="small">
-      Host this file on GitHub Pages and embed it like:<br>
-      <code>&lt;iframe src=&quot;https://&lt;your-user&gt;.github.io/&lt;repo&gt;/piano.html?musicxml=&lt;encoded-URL-to-musicxml&gt;&amp;color=red&quot; width=&quot;100%&quot; height=&quot;320&quot; style=&quot;border:0;&quot; loading=&quot;lazy&quot;&gt;&lt;/iframe&gt;</code>
+  <section class="panel non-keyboard">
+    <div class="row">
+      <input id="url" type="url" placeholder="Paste MusicXML URL…" />
+      <button id="loadUrl">Load</button>
+      <button id="demo" class="secondary">Load Demo (C Major scale)</button>
     </div>
-  </details>
+    <div id="dropzone" class="non-keyboard" style="margin-top:10px">Drop a .musicxml / .xml file here, or use the URL box above.</div>
+    <div class="tiny" style="margin-top:8px">Tip: you can also add <code>?musicxml=…&color=red&minimal=true</code> to the page URL (for embedding).</div>
+  </section>
+
+  <div id="keyboard-wrap">
+    <svg id="keyboard" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piano keyboard"></svg>
+  </div>
+
+  <section class="panel non-keyboard">
+    <details>
+      <summary><strong>Embed instructions</strong></summary>
+      <p>Place this in your page:</p>
+<pre><code>&lt;iframe
+  src="https://adrianartacho.github.io/teach_numeric/?musicxml=scores/mission-a-C.musicxml&amp;color=red&amp;minimal=true"
+  width="100%" height="320" style="border:0" loading="lazy"&gt;&lt;/iframe&gt;</code></pre>
+    </details>
+    <div id="log" class="non-keyboard"></div>
+  </section>
 
 <script>
-// ===== Utility: German note names =====
-// For naturals use: C D E F G A H
-// For flats: Ces Des Es Fes Ges As B
-// For sharps: Cis Dis Eis Fis Gis Ais His
-function germanName(step, alter){
-  const naturals = {C:'C', D:'D', E:'E', F:'F', G:'G', A:'A', B:'H'};
-  const flats    = {C:'Ces', D:'Des', E:'Es', F:'Fes', G:'Ges', A:'As', B:'B'};
-  const sharps   = {C:'Cis', D:'Dis', E:'Eis', F:'Fis', G:'Gis', A:'Ais', B:'His'};
-  if(alter === -1) return flats[step] || step;
-  if(alter ===  1) return sharps[step] || step;
-  return naturals[step] || step;
-}
-
-function stepToSemitone(step){
-  return {C:0, D:2, E:4, F:5, G:7, A:9, B:11}[step];
-}
-
-function musicXMLPitchToMidi(step, alter, octave){
-  // MIDI: C4 (middle C) = 60.
-  const pc = stepToSemitone(step) + (alter||0);
-  return (octave + 1) * 12 + pc;
-}
-
-function midiToStepAlterOct(midi){
-  const sem = midi % 12;
-  const octave = Math.floor(midi/12) - 1;
-  // Prefer naturals; map accidentals to sharps by default
-  const table = {
-    0:['C',0], 1:['C',1], 2:['D',0], 3:['D',1], 4:['E',0], 5:['F',0],
-    6:['F',1], 7:['G',0], 8:['G',1], 9:['A',0], 10:['A',1], 11:['B',0]
-  };
-  const [step, alter] = table[(sem+12)%12];
-  return {step, alter, octave};
-}
-
-// ===== Parse MusicXML (very lightweight) =====
-async function parseMusicXML(text){
-  const xml = new DOMParser().parseFromString(text, 'application/xml');
-  const notes = Array.from(xml.getElementsByTagName('note'));
-  const sequence = [];
-  for(const n of notes){
-    if(n.getElementsByTagName('rest').length) continue;
-    const pitch = n.getElementsByTagName('pitch')[0];
-    if(!pitch) continue;
-    const step = pitch.getElementsByTagName('step')[0]?.textContent?.trim();
-    const octave = parseInt(pitch.getElementsByTagName('octave')[0]?.textContent?.trim()||'0',10);
-    const alter = parseInt(pitch.getElementsByTagName('alter')[0]?.textContent?.trim()||'0',10);
-    if(!step && step!=="") continue;
-    const midi = musicXMLPitchToMidi(step, alter, octave);
-    sequence.push({step, alter, octave, midi});
-  }
-  return sequence;
-}
-
-// ===== Keyboard layout helpers =====
-function isBlack(midi){
-  const pc = ((midi % 12) + 12) % 12;
-  return [1,3,6,8,10].includes(pc);
-}
-
-function whiteKeyIndexForRange(midiStart, midi){
-  // count whites from start to this midi (inclusive of previous notes), used for x position
-  let count = 0;
-  for(let m = midiStart; m < midi; m++){
-    if(!isBlack(m)) count++;
-  }
-  return count;
-}
-
-function cBound(midi){ // nearest C <= midi
-  return Math.floor(midi/12)*12;
-}
-function bBound(midi){ // nearest B >= midi
-  return Math.ceil((midi+1)/12)*12 - 1;
-}
-
-// ===== Render SVG keyboard and marks =====
-function renderKeyboard(container, seq){
-  if(!seq.length){ container.innerHTML = '<p>No pitched notes found.</p>'; return; }
-  const minMidi = Math.min(...seq.map(n=>n.midi));
-  const maxMidi = Math.max(...seq.map(n=>n.midi));
-  const startMidi = cBound(minMidi);
-  const endMidi = bBound(maxMidi);
-
-  // dimensions
-  const Ww = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-w'));
-  const Wh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--white-key-h'));
-  const Bw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--black-key-w'));
-  const Bh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--black-key-h'));
-
-  // count white keys
-  let whiteCount = 0;
-  for(let m=startMidi; m<=endMidi; m++){ if(!isBlack(m)) whiteCount++; }
-  const width = whiteCount*Ww;
-  const height = Wh + 40; // extra space for stacked markers
-
-  // Prepare SVG
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS,'svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('role','img');
-  svg.setAttribute('aria-label','Interactive piano keyboard');
-
-  // groups
-  const gWhite = document.createElementNS(svgNS,'g');
-  const gBlack = document.createElementNS(svgNS,'g');
-  const gMarks = document.createElementNS(svgNS,'g');
-
-  // Map midi → key center x for placing marks
-  const keyCenterX = new Map();
-
-  // Draw white keys first
-  let wIndex = 0;
-  for(let m=startMidi; m<=endMidi; m++){
-    if(isBlack(m)) continue;
-    const x = wIndex*Ww;
-    const key = document.createElementNS(svgNS,'rect');
-    key.setAttribute('x', x);
-    key.setAttribute('y', 0);
-    key.setAttribute('width', Ww);
-    key.setAttribute('height', Wh);
-    key.setAttribute('class','key white');
-    const {step, alter, octave} = midiToStepAlterOct(m);
-    const label = `${germanName(step, alter)}${octave}`;
-    key.dataset.midi = m;
-    key.dataset.label = label;
-    const title = document.createElementNS(svgNS,'title');
-    title.textContent = label;
-    key.appendChild(title);
-    gWhite.appendChild(key);
-    keyCenterX.set(m, x + Ww/2);
-    wIndex++;
-  }
-
-  // Draw black keys
-  wIndex = 0; // recount to place black keys between whites
-  for(let m=startMidi; m<=endMidi; m++){
-    if(!isBlack(m)){
-      wIndex++;
-      continue;
-    }
-    // Black key sits between surrounding whites. Compute x from preceding whites
-    const whitesToLeft = whiteKeyIndexForRange(startMidi, m);
-    const x = whitesToLeft*Ww - Bw/2;
-    const key = document.createElementNS(svgNS,'rect');
-    key.setAttribute('x', x);
-    key.setAttribute('y', 0);
-    key.setAttribute('width', Bw);
-    key.setAttribute('height', Bh);
-    key.setAttribute('rx', 2);
-    key.setAttribute('class','key black');
-    const {step, alter, octave} = midiToStepAlterOct(m);
-    const label = `${germanName(step, alter)}${octave}`;
-    key.dataset.midi = m;
-    key.dataset.label = label;
-    const title = document.createElementNS(svgNS,'title');
-    title.textContent = label;
-    key.appendChild(title);
-    gBlack.appendChild(key);
-    keyCenterX.set(m, whitesToLeft*Ww);
-  }
-
-  // Place red circles with indices for each occurrence (stack if same key used multiple times)
-  const stackHeights = new Map(); // midi → count
-  const radius = 10;
-  const baselineY = Wh + 15; // start placing from bottom area
-
-  seq.forEach((n, idx) => {
-    const m = n.midi;
-    // Skip notes outside keyboard just in case
-    if(m < startMidi || m > endMidi) return;
-    const cx = keyCenterX.get(m);
-    const count = (stackHeights.get(m)||0);
-    const cy = baselineY - count * (radius*2 + 4);
-    stackHeights.set(m, count+1);
-
-    const circle = document.createElementNS(svgNS,'circle');
-    circle.setAttribute('cx', cx);
-    circle.setAttribute('cy', cy);
-    circle.setAttribute('r', radius);
-    circle.setAttribute('class','mark');
-
-    const text = document.createElementNS(svgNS,'text');
-    text.setAttribute('x', cx);
-    text.setAttribute('y', cy + 0.5); // slight optical centering
-    text.setAttribute('class','mark-label');
-    text.textContent = (idx+1).toString();
-
-    const title = document.createElementNS(svgNS,'title');
-    title.textContent = `${idx+1}: ${germanName(n.step, n.alter)}${n.octave}`;
-    circle.appendChild(title);
-
-    gMarks.appendChild(circle);
-    gMarks.appendChild(text);
-  });
-
-  svg.appendChild(gWhite);
-  svg.appendChild(gBlack);
-  svg.appendChild(gMarks);
-
-  container.innerHTML = '';
-  container.appendChild(svg);
-}
-
-// ===== Loaders =====
-async function loadFromUrl(url){
-  setStatus('Loading MusicXML…');
-  const res = await fetch(url);
-  if(!res.ok) throw new Error(`HTTP ${res.status}`);
-  const text = await res.text();
-  const seq = await parseMusicXML(text);
-  renderKeyboard(document.getElementById('viz'), seq);
-  setStatus(`Loaded ${seq.length} notes from URL.`);
-}
-
-async function loadFromFile(file){
-  setStatus('Reading MusicXML…');
-  const text = await file.text();
-  const seq = await parseMusicXML(text);
-  renderKeyboard(document.getElementById('viz'), seq);
-  setStatus(`Loaded ${seq.length} notes from file: ${file.name}`);
-}
-
-function setStatus(msg){
-  document.getElementById('status').textContent = msg || '';
-}
-
-// ===== Wire up UI =====
-const fileInp = document.getElementById('fileInp');
-const urlInp = document.getElementById('xmlUrl');
-const loadBtn = document.getElementById('loadBtn');
-fileInp.addEventListener('change', (e)=>{
-  const f = e.target.files?.[0];
-  if(f) loadFromFile(f).catch(err=>setStatus('Error: '+err.message));
-});
-loadBtn.addEventListener('click', ()=>{
-  const url = urlInp.value.trim();
-  if(url) loadFromUrl(url).catch(err=>setStatus('Error: '+err.message));
-});
-
-// Drag & drop support
-window.addEventListener('dragover', e=>{ e.preventDefault(); });
-window.addEventListener('drop', e=>{ e.preventDefault(); const f = e.dataTransfer?.files?.[0]; if(f) loadFromFile(f).catch(err=>setStatus('Error: '+err.message)); });
-
-// Auto-load via ?musicxml=
 (function(){
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const $ = sel => document.querySelector(sel);
+  const log = (msg) => {
+    const el = document.getElementById('log');
+    if (el) el.textContent = msg + (el.textContent ? ('\n' + el.textContent) : '');
+  };
+
+  // --- URL params ---
   const params = new URLSearchParams(location.search);
-  const url = params.get('musicxml');
-  const color = params.get('color');
-  if(color){
-    document.documentElement.style.setProperty('--mark-color', color);
+  const colorParam = params.get('color');
+  if (colorParam) document.documentElement.style.setProperty('--mark-color', colorParam);
+  const minimal = (params.get('minimal') === 'true' || params.get('minimal') === '1');
+  if (minimal) document.body.classList.add('minimal');
+
+  // --- German pitch names ---
+  // Returns an object with possible names; we pick according to accidental if available
+  function germanNames(pc){
+    // pc: 0..11 for C..B (where B=11 in international; German H=11, B-flat=10)
+    switch(pc){
+      case 0:  return {natural:'C', sharp:'Cis', flat:'Ces'};
+      case 1:  return {natural:'C♯', sharp:'Cis', flat:'Des'}; // enharmonic
+      case 2:  return {natural:'D', sharp:'Dis', flat:'Des'};
+      case 3:  return {natural:'D♯', sharp:'Dis', flat:'Es'};
+      case 4:  return {natural:'E', sharp:'Eis', flat:'Es'};
+      case 5:  return {natural:'F', sharp:'Fis', flat:'Fes'};
+      case 6:  return {natural:'F♯', sharp:'Fis', flat:'Ges'};
+      case 7:  return {natural:'G', sharp:'Gis', flat:'Ges'};
+      case 8:  return {natural:'G♯', sharp:'Gis', flat:'As'};
+      case 9:  return {natural:'A', sharp:'Ais', flat:'As'};
+      case 10: return {natural:'B', sharp:'His', flat:'B'};   // German: B = B♭
+      case 11: return {natural:'H', sharp:'His', flat:'Ces'}; // H = B natural
+    }
   }
-  if(url){
-    urlInp.value = url;
-    loadFromUrl(url).catch(err=>setStatus('Error: '+err.message));
+  function midiToGermanName(m, preferSharp){
+    const pc = ((m % 12) + 12) % 12;
+    const o = Math.floor(m/12) - 1; // MIDI octave
+    const names = germanNames(pc);
+    let base;
+    if (pc === 10) base = preferSharp ? names.sharp : names.natural; // B(♭) vs His
+    else if (pc === 11) base = preferSharp ? names.sharp : names.natural; // H vs His
+    else base = preferSharp ? names.sharp || names.natural : names.natural;
+    return `${base}${o}`;
   }
+
+  // --- MusicXML parsing ---
+  async function fetchText(url){
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    return await res.text();
+  }
+
+  function parseMusicXML(xmlText){
+    const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    const noteNodes = Array.from(doc.getElementsByTagName('note'));
+    let seq = []; // {midi, preferSharp}
+    for(const n of noteNodes){
+      // skip rests and grace notes
+      if (n.getElementsByTagName('rest').length) continue;
+      if (n.getElementsByTagName('grace').length) continue;
+      // optional: skip tie "stop" duplicates (simple heuristic)
+      const ties = Array.from(n.getElementsByTagName('tie')).map(t=>t.getAttribute('type'));
+      if (ties.includes('stop') && !ties.includes('start')) continue;
+
+      const pitch = n.getElementsByTagName('pitch')[0];
+      if (!pitch) continue;
+      const step = pitch.getElementsByTagName('step')[0]?.textContent?.trim();
+      const alter = +(pitch.getElementsByTagName('alter')[0]?.textContent?.trim() || '0');
+      const octave = +(pitch.getElementsByTagName('octave')[0]?.textContent?.trim() || '4');
+      const midi = pitchToMidi(step, alter, octave);
+
+      seq.push({midi, preferSharp: alter >= 0});
+      // If this note belongs to a chord (<chord/> present), we still count it in sequence order.
+    }
+    return seq;
+  }
+
+  function stepToPc(step){
+    switch(step){
+      case 'C': return 0;
+      case 'D': return 2;
+      case 'E': return 4;
+      case 'F': return 5;
+      case 'G': return 7;
+      case 'A': return 9;
+      case 'B': return 11; // MusicXML uses B for B, which in German is H
+      default: return 0;
+    }
+  }
+  function pitchToMidi(step, alter, octave){
+    const pc = (stepToPc(step) + alter + 12) % 12;
+    return (octave + 1) * 12 + pc;
+  }
+
+  // --- Keyboard layout ---
+  const WHITE_PCS = new Set([0,2,4,5,7,9,11]);
+  const BLACK_PCS = new Set([1,3,6,8,10]);
+
+  function buildKeyboardRange(minMidi, maxMidi){
+    // Clamp to piano extents A0 (21) .. C8 (108), expand by one white on both sides when possible
+    const MIN = 21, MAX = 108;
+    let lo = Math.max(MIN, Math.floor(minMidi));
+    let hi = Math.min(MAX, Math.ceil(maxMidi));
+    // Pad out so we start on a C if possible for nicer grouping
+    while ((lo % 12) !== 0 && lo > MIN) lo--;
+    while ((hi % 12) !== 0 && hi < MAX) hi++;
+    return {lo, hi};
+  }
+
+  function renderKeyboard(svg, usedSet, firstIndexByMidi, preferSharpByMidi){
+    const W = svg.clientWidth || svg.parentElement.clientWidth;
+    const H = svg.clientHeight || parseInt(getComputedStyle(svg).height);
+
+    // Determine range from used keys if any, else full 88
+    let lo = 21, hi = 108;
+    if (usedSet.size){
+      const arr = Array.from(usedSet.values());
+      const mMin = Math.min(...arr), mMax = Math.max(...arr);
+      const r = buildKeyboardRange(mMin, mMax);
+      lo = r.lo; hi = r.hi;
+    }
+
+    // Count white keys in range
+    let whites = [];
+    for (let m = lo; m <= hi; m++){
+      const pc = ((m%12)+12)%12;
+      if (WHITE_PCS.has(pc)) whites.push(m);
+    }
+    const whiteCount = whites.length;
+    const whiteW = W / whiteCount;
+    const blackW = whiteW * 0.6;
+    const blackH = H * 0.62;
+
+    // Maps to x positions
+    const xMap = new Map();
+    let x = 0;
+    for (const m of whites){
+      xMap.set(m, x);
+      x += whiteW;
+    }
+    function whiteAnchorX(m){
+      // find nearest white to the left
+      let t = m;
+      while (t>=lo){
+        const pc = ((t%12)+12)%12;
+        if (WHITE_PCS.has(pc)) return xMap.get(t);
+        t--;
+      }
+      return 0;
+    }
+
+    // Clear
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    // Group containers
+    const gWhite = document.createElementNS(svgNS, 'g');
+    const gBlack = document.createElementNS(svgNS, 'g');
+    const gMarks = document.createElementNS(svgNS, 'g');
+
+    // Draw white keys
+    for (const m of whites){
+      const pc = ((m%12)+12)%12;
+      const gx = xMap.get(m);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', gx);
+      rect.setAttribute('y', 0);
+      rect.setAttribute('width', whiteW);
+      rect.setAttribute('height', H);
+      rect.setAttribute('class', 'key white-key');
+      rect.setAttribute('data-midi', m);
+      rect.setAttribute('tabindex', 0);
+      rect.appendChild(titleNode(m, preferSharpByMidi.get(m)));
+      gWhite.appendChild(rect);
+    }
+
+    // Draw black keys (iterate through whites and decide if a black follows)
+    for (const m of whites){
+      const pc = ((m%12)+12)%12;
+      // black keys after C, D, F, G, A
+      if ([0,2,5,7,9].includes(pc)){
+        const bm = m + 1;
+        if (bm <= hi){
+          const bx = whiteAnchorX(bm) + whiteW - (blackW/2);
+          const rect = document.createElementNS(svgNS, 'rect');
+          rect.setAttribute('x', bx);
+          rect.setAttribute('y', 0);
+          rect.setAttribute('width', blackW);
+          rect.setAttribute('height', blackH);
+          rect.setAttribute('rx', 2);
+          rect.setAttribute('class', 'key black-key');
+          rect.setAttribute('data-midi', bm);
+          rect.setAttribute('tabindex', 0);
+          rect.appendChild(titleNode(bm, true));
+          gBlack.appendChild(rect);
+        }
+      }
+    }
+
+    // Draw markers for used keys
+    const markR = Math.max(10, Math.min(14, whiteW*0.33));
+    for (const m of usedSet){
+      const idx = firstIndexByMidi.get(m);
+      const preferSharp = preferSharpByMidi.get(m);
+      const pc = ((m%12)+12)%12;
+      const isWhite = WHITE_PCS.has(pc);
+      let cx;
+      if (isWhite){
+        const wx = whiteAnchorX(m);
+        cx = wx + whiteW/2;
+      } else {
+        // black: position like we drew it
+        const wx = whiteAnchorX(m);
+        cx = wx + whiteW - (blackW/2);
+      }
+      const cy = isWhite ? (H*0.18) : (blackH*0.55);
+
+      const circle = document.createElementNS(svgNS, 'circle');
+      circle.setAttribute('cx', cx);
+      circle.setAttribute('cy', cy);
+      circle.setAttribute('r', markR);
+      circle.setAttribute('class', 'mark');
+      circle.appendChild(titleNode(m, preferSharp));
+
+      const label = document.createElementNS(svgNS, 'text');
+      label.setAttribute('x', cx);
+      label.setAttribute('y', cy + 0.5);
+      label.setAttribute('class', 'mark-label');
+      label.textContent = String(idx);
+
+      gMarks.appendChild(circle);
+      gMarks.appendChild(label);
+    }
+
+    svg.appendChild(gWhite);
+    svg.appendChild(gBlack);
+    svg.appendChild(gMarks);
+  }
+
+  function titleNode(midi, preferSharp){
+    const t = document.createElementNS(svgNS, 'title');
+    t.textContent = midiToGermanName(midi, !!preferSharp);
+    return t;
+  }
+
+  function annotateSequence(seq){
+    // seq: [{midi, preferSharp}]
+    const usedSet = new Set();
+    const firstIndexByMidi = new Map();
+    const preferSharpByMidi = new Map();
+    let i = 1;
+    for (const item of seq){
+      const m = item.midi;
+      if (!firstIndexByMidi.has(m)){
+        firstIndexByMidi.set(m, i);
+        preferSharpByMidi.set(m, !!item.preferSharp);
+        usedSet.add(m);
+      }
+      i++;
+    }
+    return {usedSet, firstIndexByMidi, preferSharpByMidi};
+  }
+
+  async function loadFromUrl(url){
+    try{
+      log(`Loading: ${url}`);
+      const txt = await fetchText(url);
+      const seq = parseMusicXML(txt);
+      const {usedSet, firstIndexByMidi, preferSharpByMidi} = annotateSequence(seq);
+      renderKeyboard($('#keyboard'), usedSet, firstIndexByMidi, preferSharpByMidi);
+    }catch(err){
+      log('Error: ' + err.message);
+      console.error(err);
+    }
+  }
+
+  function loadFromFile(file){
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const seq = parseMusicXML(String(reader.result));
+        const {usedSet, firstIndexByMidi, preferSharpByMidi} = annotateSequence(seq);
+        renderKeyboard($('#keyboard'), usedSet, firstIndexByMidi, preferSharpByMidi);
+      }catch(err){ log('Error parsing file: '+err.message); }
+    };
+    reader.readAsText(file);
+  }
+
+  // --- Demo (C major scale ascending) ---
+  function demoXML(){
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
+<score-partwise version="3.1">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    ${['C4','D4','E4','F4','G4','A4','B4','C5'].map(p=>{
+      const step=p[0]; const octave=p.slice(-1); const alters={'C':0,'D':0,'E':0,'F':0,'G':0,'A':0,'B':0}[step];
+      return `<note><pitch><step>${step}</step><alter>${alters}</alter><octave>${octave}</octave></pitch><duration>1</duration><type>quarter</type></note>`
+    }).join('')}
+  </measure></part></score-partwise>`;
+  }
+
+  function loadDemo(){
+    const seq = parseMusicXML(demoXML());
+    const {usedSet, firstIndexByMidi, preferSharpByMidi} = annotateSequence(seq);
+    renderKeyboard($('#keyboard'), usedSet, firstIndexByMidi, preferSharpByMidi);
+  }
+
+  // --- Wire up UI ---
+  $('#loadUrl')?.addEventListener('click', ()=>{
+    const url = $('#url').value.trim();
+    if (url) loadFromUrl(url);
+  });
+  $('#demo')?.addEventListener('click', loadDemo);
+
+  const dz = document.getElementById('dropzone');
+  if (dz){
+    dz.addEventListener('dragover', e=>{e.preventDefault(); dz.style.background='#131313'});
+    dz.addEventListener('dragleave', e=>{dz.style.background=''});
+    dz.addEventListener('drop', e=>{
+      e.preventDefault(); dz.style.background='';
+      const f = e.dataTransfer.files?.[0];
+      if (f) loadFromFile(f);
+    });
+  }
+
+  // --- Initial load from ?musicxml= ---
+  const musicParam = params.get('musicxml');
+  if (musicParam){
+    // If relative, keep as-is, else absolute URL
+    loadFromUrl(musicParam);
+  } else if (minimal){
+    // In minimal mode with no score, render empty keyboard (full range) so iframe has size
+    const dummySeq = [];
+    const usedSet = new Set();
+    const m = new Map();
+    renderKeyboard($('#keyboard'), usedSet, m, m);
+  } else {
+    // Load demo by default for interactive page
+    loadDemo();
+  }
+
+  // Re-render on resize for crisp layout
+  let rAF = null;
+  window.addEventListener('resize', ()=>{
+    if (rAF) cancelAnimationFrame(rAF);
+    rAF = requestAnimationFrame(()=>{
+      // Re-render with last known sets by reading markers back (fallback: demo)
+      // For simplicity, just trigger a reload if URL param exists
+      if (musicParam) loadFromUrl(musicParam); else loadDemo();
+    });
+  });
 })();
 </script>
 </body>
