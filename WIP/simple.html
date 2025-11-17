@@ -242,34 +242,6 @@ $('#load').addEventListener('click', async ()=>{
     console.error(e); msg('Error: '+(e.message||String(e)),'error');
   }
 });
-// ===== Query param loader =====
-function applyQueryParamsAndMaybeAutoLoad(){
-  const qs = new URLSearchParams(location.search);
-  const musicxml = qs.get('musicxml');
-  const color = qs.get('color');
-  const dedupe = qs.get('dedupe');
-  const minimal = qs.get('minimal');
-  const simplified = qs.get('simplified'); // alias for dedupe
-
-  if(musicxml){ $('#url').value = musicxml; }
-  if(color){ $('#color').value = color; }
-  if(dedupe==="0" || dedupe==="false"){ $('#dedupe').checked = false; }
-  if(dedupe==="1" || dedupe==="true" || simplified==="true"){ $('#dedupe').checked = true; }
-
-  if(minimal==="true"){
-    // hide controls, keep only keyboard
-    const card = document.querySelector('main .card');
-    if(card) card.style.display = 'none';
-  }
-
-  if(musicxml){
-    // auto-load
-    $('#load').click();
-  }
-}
-
-// Run after DOM is ready
-window.addEventListener('DOMContentLoaded', applyQueryParamsAndMaybeAutoLoad);
 </script>
 </body>
 </html>
