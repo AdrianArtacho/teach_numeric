@@ -21,7 +21,8 @@
     /* Keyboard */
     #kbWrap{position:relative;background:#11172f;border-radius:14px;border:1px solid #2a3568;padding:16px;margin-top:8px}
     .kb{position:relative;user-select:none}
-    .white{position:relative;display:inline-block;width:28px;height:160px;background:#f5f7ff;border:1px solid #c6cee6;border-bottom-left-radius:6px;border-bottom-right-radius:6px;margin-right:0}
+    .kbRow{position:relative;white-space:nowrap;display:block;font-size:0}
+    .white{position:relative;display:inline-block;width:28px;height:160px;background:#f5f7ff;border:1px solid #c6cee6;border-bottom-left-radius:6px;border-bottom-right-radius:6px;margin-right:0;vertical-align:top}
     .black{position:absolute;width:18px;height:100px;background:#131726;border:1px solid #0e1425;border-bottom-left-radius:4px;border-bottom-right-radius:4px;top:0;z-index:5}
     .key{position:relative}
     .key:hover{outline:2px solid #3b7cff}
@@ -31,7 +32,7 @@
     .dot{position:absolute;left:50%;transform:translateX(-50%);width:22px;height:22px;border-radius:999px;background:#ff4757;display:flex;align-items:center;justify-content:center;font-weight:700;color:white;font-size:12px;border:2px solid rgba(0,0,0,.15);box-shadow:0 2px 6px rgba(0,0,0,.35)}
     .stack{display:flex;flex-direction:column;gap:6px;position:absolute;left:50%;transform:translateX(-50%)}
 
-    .bar{display:inline-block;background:#19224b;padding:6px 8px;border-radius:10px;border:1px solid #2a3568}
+    .bar{display:inline-block;background:#19224b;padding:6px 8px;border-radius:10px;border:1px solid #2a3568{display:inline-block;background:#19224b;padding:6px 8px;border-radius:10px;border:1px solid #2a3568}
     .muted{opacity:.75}
     .error{background:#33121a;border-color:#642735;color:#ff93a4;padding:8px 10px;border-radius:10px}
   </style>
@@ -145,31 +146,33 @@ function buildKeyboard(minMidi,maxMidi){
   // Map midi -> position/offset to place stickers
   const keyMap = new Map();
 
-  let x = 0;
+  let w = 0; // count of white keys rendered so far
   for(let m=start; m<=end;){
-    // white key
     const pc = (m%12+12)%12;
     const stepIdx = [0,2,4,5,7,9,11].indexOf(pc);
-    let step;
-    if(stepIdx>=0) step = WHITE_STEPS[stepIdx]; else step = 'C';
+    const step = stepIdx>=0 ? ['C','D','E','F','G','A','B'][stepIdx] : 'C';
+
+    // white key inline; no absolute left
     const white = document.createElement('div');
     white.className='white key';
-    white.style.left = x+"px"; white.style.display='inline-block';
     white.dataset.m = m;
     white.title = '…';
+    wrap.appendChild(white);
 
-    // black key if exists
+    // black key positioned absolutely inside the row, relative to number of whites
     if(HAS_BLACK[step]){
       const black = document.createElement('div');
       black.className='black key';
-      black.style.left = (x + 20) + 'px';
-      black.dataset.m = (m+1); // sharpened midi
+      black.style.left = (w*28 + 20) + 'px';
+      black.dataset.m = (m+1);
       black.title='…';
       wrap.appendChild(black);
+      m += 2; // e.g., C->D
+    } else {
+      m += 1; // e.g., E->F does not have a black between
     }
 
-    wrap.appendChild(white);
-    x += 28; m += (HAS_BLACK[step]? 2: 1); // if there is a black after this white, skip to next natural (C->D is +2; E->F is +1)
+    w += 1;
   }
   return {wrap, keyMap};
 }
