@@ -1,4 +1,3 @@
-
 # 🎹 NUMERIC
 
 This project renders an **interactive piano keyboard** based on a given MusicXML file.  
@@ -26,15 +25,17 @@ Perfect for use in educational contexts — and can easily be **embedded** into 
    (e.g. at `https://yourname.github.io/yourrepo/`)
 
 2. Place your MusicXML files under `/scores/`, for example:
-```
+   
+   ```
+   
+   ```
 
 yourrepo/
 ├─ piano.html
 └─ scores/
 └─ alors-a-C.musicxml
 
-````
-
+```
 3. Use the following embed code anywhere on the web:
 
 ```html
@@ -45,7 +46,7 @@ yourrepo/
   style="border:0;"
   loading="lazy">
 </iframe>
-````
+```
 
 ---
 
@@ -84,6 +85,42 @@ Example with multiple parameters:
 
 ---
 
+### Using the “simplified” (no consecutive duplicates) viewer
+
+You can load the deduped keyboard view directly via a URL that points to `simple.html` and passes your MusicXML file:
+
+```
+https://<your-username>.github.io/<your-repo>/simple.html
+  ?musicxml=<PUBLIC_RAW_URL_TO_MUSICXML>
+  &simplified=true
+  &color=violet
+  &minimal=true
+```
+
+**Params**
+
+* `musicxml` (required): public URL to a `.musicxml` file (e.g. a GitHub raw link).
+
+* `simplified=true`: collapses **consecutive** duplicate notes (A B B C → A B C).
+  
+  * Alias: `dedupe=true` (either works).
+
+* `color`: CSS color for the stickers (e.g. `red`, `#ff4757`, `rgb(0,200,180)`).
+
+* `minimal=true`: hides controls, shows only the keyboard (nice for embedding).
+
+**Example**
+
+```
+https://adrianartacho.github.io/teach_numeric/simple.html
+  ?musicxml=https://raw.githubusercontent.com/AdrianArtacho/score_excerpts/refs/heads/main/mission/mission-b2-C.musicxml
+  &simplified=true
+  &color=green
+  &minimal=true
+```
+
+---
+
 ## 💡 Credits
 
 Developed by **Adrián Artacho**
@@ -101,8 +138,5 @@ You are free to use, modify, and embed this visualizer in your own projects.
 
 ## To-Do (branch out for development)
 
-* BIG ISSUE: wrong piano keys.
 * Do not process hidden (invisible) notes. This way, i don't need to delete them in the maxmsp file.
-* When the same key is used several times in the sequence, have a different circle for each.
-* 'simplified' tag should, out of the box, remove consecutive repetitions of the same key
 * it would be nice for the key to light up on hoovering (and large note name)
