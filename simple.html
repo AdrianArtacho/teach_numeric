@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MusicXML → Keyboard (Consecutive‑Dedupe)</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#0b1020;color:#e6ecff}
+    header,main{max-width:1100px;margin:0 auto;padding:16px 20px}
+    header h1{font-weight:650;margin:8px 0 4px}
+    header p{margin:0;color:#b7c1ff}
+    .card{background:#0f1733;border:1px solid #293365;border-radius:14px;padding:14px 16px;margin:12px 0}
+    label{font-size:13px;color:#cbd6ff}
+    input[type="text"],input[type="number"],button{border-radius:10px;border:1px solid #3b4680;background:#0c1330;color:#e6ecff;padding:8px 10px}
+    button{cursor:pointer}
+    button.primary{background:#3b7cff;border-color:#2e64cc}
+    button:hover{filter:brightness(1.08)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .help{color:#9fb2ff;font-size:12px}
+
+    /* Keyboard */
+    #kbWrap{position:relative;background:#11172f;border-radius:14px;border:1px solid #2a3568;padding:16px;margin-top:8px}
+    .kb{position:relative;user-select:none}
+    .white{position:relative;display:inline-block;width:28px;height:160px;background:#f5f7ff;border:1px solid #c6cee6;border-bottom-left-radius:6px;border-bottom-right-radius:6px;margin-right:0}
+    .black{position:absolute;width:18px;height:100px;background:#131726;border:1px solid #0e1425;border-bottom-left-radius:4px;border-bottom-right-radius:4px;top:0;z-index:5}
+    .key{position:relative}
+    .key:hover{outline:2px solid #3b7cff}
+    .tip{position:absolute;bottom:4px;left:4px;font-size:10px;color:#1d2342}
+
+    /* Stickers */
+    .dot{position:absolute;left:50%;transform:translateX(-50%);width:22px;height:22px;border-radius:999px;background:#ff4757;display:flex;align-items:center;justify-content:center;font-weight:700;color:white;font-size:12px;border:2px solid rgba(0,0,0,.15);box-shadow:0 2px 6px rgba(0,0,0,.35)}
+    .stack{display:flex;flex-direction:column;gap:6px;position:absolute;left:50%;transform:translateX(-50%)}
+
+    .bar{display:inline-block;background:#19224b;padding:6px 8px;border-radius:10px;border:1px solid #2a3568}
+    .muted{opacity:.75}
+    .error{background:#33121a;border-color:#642735;color:#ff93a4;padding:8px 10px;border-radius:10px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>MusicXML → Keyboard (Consecutive‑Dedupe)</h1>
+  <p>Parses a MusicXML melody, <strong>collapses consecutive repeats</strong>, and places numbered stickers on the keys. Tooltips show German names.</p>
+</header>
+
+<main>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>Load MusicXML file</label><br>
+        <input id="file" type="file" accept=".musicxml,.xml" />
+      </div>
+      <div>
+        <label>or MusicXML URL</label><br>
+        <input id="url" type="text" placeholder="https://…/score.musicxml" size="42">
+      </div>
+      <div class="row" style="align-items:flex-end">
+        <button id="load" class="primary">Load</button>
+        <label class="row" style="gap:6px">
+          <input id="dedupe" type="checkbox" checked>
+          collapse consecutive repeats
+        </label>
+        <label class="row muted" style="gap:6px">
+          circle color
+          <input id="color" type="text" value="#ff4757" size="8" title="CSS color (e.g. #ff4757 or red)">
+        </label>
+      </div>
+    </div>
+    <p id="msg" class="help" style="margin-top:6px"></p>
+  </div>
+
+  <div id="kbWrap" class="card">
+    <div id="kb" class="kb"></div>
+  </div>
+
+  <div class="card">
+    <div class="help">Tip: You can embed this on GitHub Pages. The keyboard range auto-fits the lowest/highest notes in the parsed sequence. If the same key appears again later, it gets another sticker (stacked vertically). With “collapse consecutive repeats”, immediate repeats are treated as a single event in the sequence.</div>
+  </div>
+</main>
+
+<script>
+const $ = (s)=>document.querySelector(s);
+const msg = (t,cls='help')=>{$('#msg').className=cls; $('#msg').textContent=t}
+
+// ===== Music helpers =====
+const STEP_TO_INDEX = {C:0,D:1,E:2,F:3,G:4,A:5,B:5+1}; // B maps to 6 (same as H pitch class derivation handled below)
+const NAT_SEMITONES = [0,2,4,5,7,9,11];
+function midiOf(step, oct, alter){
+  const idx = {C:0,D:1,E:2,F:3,G:4,A:5,B:6}[step];
+  const base = NAT_SEMITONES[idx] + 12*(oct+1);
+  return base + (alter||0);
+}
+function parseMusicXML(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  const notes = Array.from(doc.querySelectorAll('note'))
+    .filter(n=>n.querySelector('pitch'))
+    .map(n=>{
+      const p = n.querySelector('pitch');
+      const step = p.querySelector('step')?.textContent.trim().toUpperCase();
+      const oct = parseInt(p.querySelector('octave')?.textContent,10);
+      const al = p.querySelector('alter') ? parseInt(p.querySelector('alter').textContent,10) : 0;
+      return {step,octave:oct,alter:al,midi:midiOf(step,oct,al)}
+    });
+  return notes;
+}
+function dedupeConsecutive(seq, keyFn = x=>x.midi){
+  if(!seq.length) return seq;
+  const out=[seq[0]];
+  for(let i=1;i<seq.length;i++) if(keyFn(seq[i])!==keyFn(seq[i-1])) out.push(seq[i]);
+  return out;
+}
+
+// German names (basic mapping)
+function germanName(step, alter){
+  // Natural letters in German: C D E F G A H; B♭ is "B"
+  const naturals = {C:'C',D:'D',E:'E',F:'F',G:'G',A:'A',B:'H'};
+  if(alter===0) return naturals[step];
+  if(alter===1){ // sharps
+    const mapSharp = {C:'Cis',D:'Dis',E:'Eis',F:'Fis',G:'Gis',A:'Ais',B:'His'};
+    return mapSharp[step] || (naturals[step]+'is');
+  }
+  if(alter===-1){ // flats
+    const mapFlat = {E:'Es',A:'As',B:'B'}; // common German exceptions
+    if(step in mapFlat) return mapFlat[step];
+    return (naturals[step]+'es');
+  }
+  // double accidentals (rare)
+  if(alter===2) return germanName(step,1) + 'is';
+  if(alter===-2) return germanName(step,-1) + 'es';
+  return naturals[step];
+}
+function labelFor(p){
+  return `${p.step}${p.alter===1?'#':p.alter===-1?'b':''}${p.octave} / ${germanName(p.step,p.alter)}${p.octave}`;
+}
+
+// Keyboard rendering
+const WHITE_STEPS = ['C','D','E','F','G','A','B'];
+const HAS_BLACK = {C:true,D:true,E:false,F:true,G:true,A:true,B:false};
+function buildKeyboard(minMidi,maxMidi){
+  // expand to start at C and end at B for clean layout
+  const start = Math.floor((minMidi-3)/12)*12 + 12; // close to a C
+  const end   = Math.ceil((maxMidi-3)/12)*12 + 11;  // to B
+  const wrap = document.createElement('div');
+  wrap.className='kbRow';
+
+  // Map midi -> position/offset to place stickers
+  const keyMap = new Map();
+
+  let x = 0;
+  for(let m=start; m<=end;){
+    // white key
+    const pc = (m%12+12)%12;
+    const stepIdx = [0,2,4,5,7,9,11].indexOf(pc);
+    let step;
+    if(stepIdx>=0) step = WHITE_STEPS[stepIdx]; else step = 'C';
+    const white = document.createElement('div');
+    white.className='white key';
+    white.style.left = x+"px"; white.style.display='inline-block';
+    white.dataset.m = m;
+    white.title = '…';
+
+    // black key if exists
+    if(HAS_BLACK[step]){
+      const black = document.createElement('div');
+      black.className='black key';
+      black.style.left = (x + 20) + 'px';
+      black.dataset.m = (m+1); // sharpened midi
+      black.title='…';
+      wrap.appendChild(black);
+    }
+
+    wrap.appendChild(white);
+    x += 28; m += (HAS_BLACK[step]? 2: 1); // if there is a black after this white, skip to next natural (C->D is +2; E->F is +1)
+  }
+  return {wrap, keyMap};
+}
+
+function render(seq, color){
+  const kb = $('#kb');
+  kb.innerHTML='';
+  if(!seq.length){ msg('No pitched notes found.','error'); return; }
+  const midis = seq.map(n=>n.midi);
+  const minM = Math.min(...midis), maxM = Math.max(...midis);
+  const {wrap} = buildKeyboard(minM,maxM);
+  kb.appendChild(wrap);
+
+  // tooltip names for keys present in the sequence (closest spelling from parsed notes)
+  const byMidi = new Map();
+  seq.forEach((p,i)=>{
+    if(!byMidi.has(p.midi)) byMidi.set(p.midi, []);
+    byMidi.get(p.midi).push(i+1); // 1-based index numbers
+  });
+
+  // place stickers
+  const keys = Array.from(wrap.querySelectorAll('.key'));
+  for(const key of keys){
+    const m = parseInt(key.dataset.m,10);
+    // find nearest note objects in seq with this midi to label tooltip
+    const occ = byMidi.get(m) || [];
+    if(occ.length){
+      // get one note example for naming
+      const p = seq.find(x=>x.midi===m);
+      key.title = labelFor(p);
+      // stack circles
+      const stack = document.createElement('div');
+      stack.className='stack';
+      // vertical positioning: for white vs black keys
+      stack.style.bottom = (key.classList.contains('black')? '6px':'8px');
+      occ.forEach(n=>{
+        const d=document.createElement('div');
+        d.className='dot'; d.textContent=String(n); d.style.background=color;
+        stack.appendChild(d);
+      });
+      key.appendChild(stack);
+    }
+  }
+}
+
+// I/O
+async function fetchText(url){
+  const r = await fetch(url, {cache:'no-store'});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return await r.text();
+}
+
+$('#load').addEventListener('click', async ()=>{
+  try{
+    msg('Loading…');
+    let xml='';
+    const f = $('#file').files[0];
+    if(f){
+      xml = await f.text();
+    } else {
+      const url = $('#url').value.trim();
+      if(!url) throw new Error('Select a file or paste a URL.');
+      xml = await fetchText(url);
+    }
+    let seq = parseMusicXML(xml);
+    if($('#dedupe').checked) seq = dedupeConsecutive(seq);
+    render(seq, $('#color').value || '#ff4757');
+    msg(`Parsed ${seq.length} events (after consecutive‑dedupe if enabled).`);
+  }catch(e){
+    console.error(e); msg('Error: '+(e.message||String(e)),'error');
+  }
+});
+</script>
+</body>
+</html>
