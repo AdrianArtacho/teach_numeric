@@ -6,6 +6,8 @@ Hovering over a key displays its **German note name**.
 
 Perfect for use in educational contexts — and can easily be **embedded** into other websites (e.g., via GitHub Pages).
 
+![img/gui.png](img/gui.png)
+
 ---
 
 ## 🚀 Features
